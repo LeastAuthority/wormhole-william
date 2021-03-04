@@ -44,7 +44,10 @@ func NewServer() *TestServer {
 }
 
 func (ts *TestServer) Agents() [][]string {
-	return ts.agents
+	ts.mu.Lock()
+	agents := ts.agents
+	ts.mu.Unlock()
+	return agents
 }
 
 func (ts *TestServer) WebSocketURL() string {

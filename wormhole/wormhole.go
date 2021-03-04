@@ -33,10 +33,10 @@ type Client struct {
 	// DefaultRendezvousURL will be used.
 	RendezvousURL string
 
-	// TransitRelayAddress is the host:port address to offer
+	// TransitRelayURL is the proto:host:port address to offer
 	// to use for file transfers where direct connections are unavailable.
-	// If empty, DefaultTransitRelayAddress will be used.
-	TransitRelayAddress string
+	// If empty, DefaultTransitRelayUrl will be used.
+	TransitRelayURL string
 
 	// PassPhraseComponentLength is the number of words to use
 	// when generating a passprase. Any value less than 2 will
@@ -63,8 +63,9 @@ var (
 	// DefaultRendezvousURL is the default Rendezvous server to use.
 	DefaultRendezvousURL = "ws://relay.magic-wormhole.io:4000/v1"
 
-	// DefaultTransitRelayAddress is the default transit server to ues.
-	DefaultTransitRelayAddress = "transit.magic-wormhole.io:4001"
+	// DefaultTransitRelayUrl is the default transit server to use.
+	// DefaultTransitRelayUrl = "tcp:transit.magic-wormhole.io:4001"
+	DefaultTransitRelayUrl = "ws://localhost:4002"
 )
 
 func (c *Client) url() string {
@@ -89,19 +90,61 @@ func (c *Client) wordCount() int {
 	}
 }
 
-func (c *Client) relayAddr() string {
-	if c.TransitRelayAddress != "" {
-		return c.TransitRelayAddress
+func (c *Client) relayUrl() string {
+	if c.TransitRelayURL != "" {
+		return c.TransitRelayURL
 	}
-	return DefaultTransitRelayAddress
+
+	return DefaultTransitRelayUrl
 }
 
-func (c *Client) validateRelayAddr() error {
-	if c.relayAddr() == "" {
+func (c *Client) relayAddr() (string, error) {
+	url := c.relayUrl()
+
+	if url == "" {
+		return "", nil
+	}
+
+	urlParts := strings.Split(url, ":")
+	hostport := strings.Join(urlParts[1:], ":")
+	if urlParts[0] == "ws" {
+		// ws urls are of the form: ws://host:port/path
+		// so, the "//" needs to be removed as well.
+		hostport = hostport[2:]
+	}
+	_, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return "", err
+	}
+
+	return hostport, nil
+}
+
+func (c *Client) getProtocol() (string, error) {
+	url := c.relayUrl()
+	if url == "" {
+		return "", nil
+	}
+
+	urlParts := strings.Split(url, ":")
+
+	return urlParts[0], nil
+}
+
+func (c *Client) validateRelayUrl() error {
+	url := c.relayUrl()
+	if url == "" {
 		return nil
 	}
-	_, _, err := net.SplitHostPort(c.relayAddr())
-	return err
+	urlParts := strings.Split(url, ":")
+
+	hostport := strings.Join(urlParts[1:], ":")
+	_, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // SendResult has information about whether or not a Send command was successful.

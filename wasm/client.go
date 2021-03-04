@@ -18,9 +18,8 @@ type ClientMap = map[uintptr]*wormhole.Client
 // TODO: automate use of `-ld -X` with env vars
 const DEFAULT_APP_ID = "myFileTransfer"
 const DEFAULT_RENDEZVOUS_URL = "http://localhost:4000/v1"
-const DEFAULT_TRANSIT_RELAY_ADDRESS = "ws://localhost:4001"
+const DEFAULT_TRANSIT_RELAY_ADDRESS = "ws://localhost:4002"
 const DEFAULT_PASSPHRASE_COMPONENT_LENGTH = 2
-const MAX_FILE_SIZE = 100000000 // bytes
 
 var (
 	ErrClientNotFound = fmt.Errorf("%s", "wormhole client not found")
@@ -73,7 +72,7 @@ func NewClient(this js.Value, args []js.Value) interface{} {
 	client := &wormhole.Client{
 		AppID:                     appID.String(),
 		RendezvousURL:             rendezvousURL.String(),
-		TransitRelayAddress:       transitRelayAddress.String(),
+		TransitRelayURL:           transitRelayAddress.String(),
 		PassPhraseComponentLength: passPhraseComponentLength.Int(),
 	}
 	clientPtr := uintptr(unsafe.Pointer(client))
@@ -120,9 +119,10 @@ func Client_SendFile(_ js.Value, args []js.Value) interface{} {
 		clientPtr := uintptr(args[0].Int())
 		fileName := args[1].String()
 
-		// TODO: something better!
-		fileData := make([]byte, MAX_FILE_SIZE)
-		js.CopyBytesToGo(fileData, args[2])
+		uint8Array := args[2]
+		size := uint8Array.Get("byteLength").Int()
+		fileData := make([]byte, size)
+		js.CopyBytesToGo(fileData, uint8Array)
 		fileReader := bytes.NewReader(fileData)
 
 		err, client := getClient(clientPtr)
@@ -202,7 +202,7 @@ func Client_RecvFile(_ js.Value, args []js.Value) interface{} {
 		}
 
 			// TODO: something better!
-			jsData := js.Global().Get("Uint8Array").New(MAX_FILE_SIZE)
+			jsData := js.Global().Get("Uint8Array").New(len(msgBytes))
 			js.CopyBytesToJS(jsData, msgBytes)
 			resolve(jsData)
 	})

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"time"
 
+	"nhooyr.io/websocket"
 	"github.com/psanford/wormhole-william/internal/crypto"
 	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/nacl/secretbox"
@@ -154,11 +155,12 @@ func (d *transportCryptor) writeRecord(msg []byte) error {
 	return err
 }
 
-func newFileTransport(transitKey []byte, appID, relayAddr string) *fileTransport {
+func newFileTransport(transitKey []byte, appID, relayProto string, relayAddr string) *fileTransport {
 	return &fileTransport{
 		transitKey: transitKey,
 		appID:      appID,
 		relayAddr:  relayAddr,
+		relayProto: relayProto,
 	}
 }
 
@@ -166,6 +168,7 @@ type fileTransport struct {
 	listener   net.Listener
 	relayConn  net.Conn
 	relayAddr  string
+	relayProto string
 	transitKey []byte
 	appID      string
 }
@@ -188,7 +191,27 @@ func (t *fileTransport) connectViaRelay(otherTransit *transitMsg) (net.Conn, err
 
 					cancelFuncs[addr] = cancel
 
-					go t.connectToRelay(ctx, addr, successChan, failChan)
+					go t.connectToRelay(ctx, "tcp", addr, successChan, failChan)
+				}
+
+				if innerHint.Type == "direct-ws-v1" {
+					count++
+					ctx, cancel := context.WithCancel(context.Background())
+					addr := net.JoinHostPort(innerHint.Hostname, strconv.Itoa(innerHint.Port))
+
+					cancelFuncs[addr] = cancel
+
+					go t.connectToRelay(ctx, "ws", addr, successChan, failChan)
+				}
+
+				if innerHint.Type == "direct-wss-v1" {
+					count++
+					ctx, cancel := context.WithCancel(context.Background())
+					addr := net.JoinHostPort(innerHint.Hostname, strconv.Itoa(innerHint.Port))
+
+					cancelFuncs[addr] = cancel
+
+					go t.connectToRelay(ctx, "wss", addr, successChan, failChan)
 				}
 			}
 		}
@@ -250,12 +273,34 @@ func (t *fileTransport) connectDirect(otherTransit *transitMsg) (net.Conn, error
 	return conn, nil
 }
 
-func (t *fileTransport) connectToRelay(ctx context.Context, addr string, successChan chan net.Conn, failChan chan string) {
+func (t *fileTransport) connectToRelay(ctx context.Context, proto string, addr string, successChan chan net.Conn, failChan chan string) {
 	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		failChan <- addr
-		return
+	var conn net.Conn
+	var err error
+	switch proto {
+	case "tcp":
+		conn, err = d.DialContext(ctx, proto, addr)
+
+		if err != nil {
+			failChan <- addr
+			return
+		}
+	case "ws", "wss", "http", "https":
+		var wsconn *websocket.Conn
+		// TODO: that url path has to come from the other side via transit message.
+		// At the moment, it is hard coded here as "/".
+		// The RelayHint messages carry only host, port, type and priority, so this
+		// is something that needs to be modified at the message level. Perhaps create
+		// a new version of the Hints message called HintsV2?
+		wsRelayURL := fmt.Sprintf("%s://%s/", proto, addr)
+		wsconn, _, err = websocket.Dial(ctx, wsRelayURL, nil)
+
+		if err != nil {
+			failChan <- addr
+			return
+		}
+
+		conn = websocket.NetConn(ctx, wsconn, websocket.MessageBinary)
 	}
 
 	_, err = conn.Write(t.relayHandshakeHeader())
@@ -382,11 +427,22 @@ func (t *fileTransport) makeTransitMsg() (*transitMsg, error) {
 			return nil, fmt.Errorf("port isn't an integer? %s", portStr)
 		}
 
+		var relayType string;
+		switch t.relayProto {
+		case "tcp":
+			relayType = "direct-tcp-v1"
+		case "ws", "http":
+			relayType = "direct-ws-v1"
+		case "wss", "https":
+			relayType = "direct-wss-v1"
+		default:
+			return nil, fmt.Errorf("unknown relay protocol")
+		}
 		msg.HintsV1 = append(msg.HintsV1, transitHintsV1{
 			Type: "relay-v1",
 			Hints: []transitHintsV1Hint{
 				{
-					Type:     "direct-tcp-v1",
+					Type:     relayType,
 					Priority: 2.0,
 					Hostname: relayHost,
 					Port:     relayPort,
@@ -449,23 +505,45 @@ func (t *fileTransport) listen() error {
 	if testDisableLocalListener {
 		return nil
 	}
+	switch (t.relayProto) {
+	case "", "tcp":
+		l, err := net.Listen("tcp", ":0")
+		if err != nil {
+			return err
+		}
 
-	l, err := net.Listen("tcp", ":0")
-	if err != nil {
-		return err
+		t.listener = l
+	case "ws":
+		t.listener = nil
 	}
 
-	t.listener = l
 	return nil
 }
 
 func (t *fileTransport) listenRelay() error {
+
+	ctx := context.Background()
 	if t.relayAddr == "" {
 		return nil
 	}
-	conn, err := net.Dial("tcp", t.relayAddr)
-	if err != nil {
-		return err
+	var conn net.Conn
+	var err error
+	switch t.relayProto {
+	case "tcp":
+		conn, err = net.Dial("tcp", t.relayAddr)
+		if err != nil {
+			return err
+		}
+	case "ws", "wss", "http", "https":
+		// TODO: The hardcoding of the URL should be removed once there is
+		// a way to represent it in the Hint messages. At the moment, there
+		// is no way to do that and hence this hardcoding.
+		wsRelayURL := fmt.Sprintf("%s://%s/", t.relayProto, t.relayAddr)
+		c, _, err := websocket.Dial(ctx, wsRelayURL, nil)
+		if err != nil {
+			fmt.Errorf("websocket.Dial failed")
+		}
+		conn = websocket.NetConn(ctx, c, websocket.MessageBinary)
 	}
 
 	_, err = conn.Write(t.relayHandshakeHeader())

@@ -185,7 +185,7 @@ func (c *Client) SendText(ctx context.Context, msg string, opts ...SendOption) (
 }
 
 func (c *Client) sendFileDirectory(ctx context.Context, offer *offerMsg, r io.Reader, opts ...SendOption) (string, chan SendResult, error) {
-	if err := c.validateRelayAddr(); err != nil {
+	if err := c.validateRelayUrl(); err != nil {
 		return "", nil, fmt.Errorf("invalid TransitRelayAddress: %s", err)
 	}
 
@@ -297,7 +297,17 @@ func (c *Client) sendFileDirectory(ctx context.Context, offer *offerMsg, r io.Re
 		}
 
 		transitKey := deriveTransitKey(clientProto.sharedKey, appID)
-		transport := newFileTransport(transitKey, appID, c.relayAddr())
+		relayAddr, err := c.relayAddr()
+		if err != nil {
+			sendErr(err)
+		}
+
+		relayProto, err := c.getProtocol()
+		if err != nil {
+			sendErr(err)
+		}
+
+		transport := newFileTransport(transitKey, appID, relayProto, relayAddr)
 		err = transport.listen()
 		if err != nil {
 			sendErr(err)
@@ -432,7 +442,7 @@ func (c *Client) sendFileDirectory(ctx context.Context, offer *offerMsg, r io.Re
 // receiver, a result channel that will be written to after the receiver attempts to read (either successfully or not)
 // and an error if one occurred.
 func (c *Client) SendFile(ctx context.Context, fileName string, r io.ReadSeeker, opts ...SendOption) (string, chan SendResult, error) {
-	if err := c.validateRelayAddr(); err != nil {
+	if err := c.validateRelayUrl(); err != nil {
 		return "", nil, fmt.Errorf("invalid TransitRelayAddress: %s", err)
 	}
 

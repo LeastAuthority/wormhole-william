@@ -111,8 +111,8 @@ func Client_SendFile(_ js.Value, args []js.Value) interface{} {
 	ctx := context.Background()
 
 	return NewPromise(func(resolve ResolveFn, reject RejectFn) {
-		if len(args) != 3 {
-			reject(fmt.Errorf("invalid number of arguments: %d. expected: %d", len(args), 3))
+		if len(args) != 3 && len(args) != 4 {
+			reject(fmt.Errorf("invalid number of arguments: %d. expected: %s", len(args), "3 or 4"))
 			return
 		}
 
@@ -131,12 +131,20 @@ func Client_SendFile(_ js.Value, args []js.Value) interface{} {
 			return
 		}
 
-			code, _, err := client.SendFile(ctx, fileName, fileReader)
-			if err != nil {
-				reject(err)
-				return
-			}
-			resolve(code)
+		var code string
+		if len(args) == 4 && !args[3].IsUndefined() {
+			withProgress := wormhole.WithProgress(func(sentBytes int64, totalBytes int64) {
+				args[3].Invoke(sentBytes, totalBytes)
+			})
+			code, _, err = client.SendFile(ctx, fileName, fileReader, withProgress)
+		} else {
+			code, _, err = client.SendFile(ctx, fileName, fileReader)
+		}
+		if err != nil {
+			reject(err)
+			return
+		}
+		resolve(code)
 	})
 }
 

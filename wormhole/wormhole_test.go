@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"github.com/klauspost/compress/zip"
 	"github.com/psanford/wormhole-william/rendezvous/rendezvousservertest"
 	"nhooyr.io/websocket"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWormholeSendRecvText(t *testing.T) {
@@ -221,14 +223,10 @@ func TestWormholeFileReject(t *testing.T) {
 	buf := bytes.NewReader(fileContent)
 
 	code, resultCh, err := c0.SendFile(ctx, "file.txt", buf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, err)
 
 	receiver, err := c1.Receive(ctx, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, err)
 
 	receiver.Reject()
 
@@ -330,19 +328,13 @@ func TestWormholeBigFileTransportSendRecvViaRelayServer(t *testing.T) {
 	// skip th wrapper so we can provide our own offer
 	code, _, err := c0.sendFileDirectory(ctx, offer, r)
 	//c0.SendFile(ctx, "file.txt", buf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, err)
 
 	receiver, err := c1.Receive(ctx, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, err)
 
-	if int64(receiver.TransferBytes64) != fakeBigSize {
-		t.Fatalf("Mismatch in size between what we are trying to send and what is (our parsed) offer. Expected %v but got %v", fakeBigSize, receiver.TransferBytes64)
-	}
-
+	require.Equal(t, receiver.TransferBytes64, fakeBigSize,
+		fmt.Sprintf("Mismatch in size between what we are trying to send and what is (our parsed) offer. Expected %v but got %v", fakeBigSize, receiver.TransferBytes64))
 }
 
 func TestWormholeFileTransportRecvMidStreamCancel(t *testing.T) {
@@ -375,31 +367,23 @@ func TestWormholeFileTransportRecvMidStreamCancel(t *testing.T) {
 	buf := bytes.NewReader(fileContent)
 
 	code, resultCh, err := c0.SendFile(ctx, "file.txt", buf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, err)
 
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	receiver, err := c1.Receive(childCtx, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, err)
 
 	initialBuffer := make([]byte, 1<<10)
 
 	_, err = io.ReadFull(receiver, initialBuffer)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, err)
 
 	cancel()
 
 	_, err = ioutil.ReadAll(receiver)
-	if err == nil {
-		t.Fatalf("Expected read error but got none")
-	}
+	require.NotNil(t, err)
 
 	result := <-resultCh
 	if result.OK {
@@ -443,19 +427,13 @@ func TestWormholeFileTransportSendMidStreamCancel(t *testing.T) {
 	}
 
 	code, resultCh, err := c0.SendFile(sendCtx, "file.txt", &splitR)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, err)
 
 	receiver, err := c1.Receive(ctx, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, err)
 
 	_, err = ioutil.ReadAll(receiver)
-	if err == nil {
-		t.Fatal("Expected read error but got none")
-	}
+	require.NotNil(t, err)
 
 	result := <-resultCh
 	if result.OK {
@@ -747,11 +725,15 @@ func (ts *testRelayServer) handleConn(c net.Conn) {
 func TestClient_relayURL_default(t *testing.T) {
 	var c Client
 
-	DefaultTransitRelayURL = "tcp:transit.magic-wormhole.io:8001"
-	p := c.relayURL().Proto
-	if p != "tcp" {
-		t.Error(fmt.Sprintf("invalid protocol, expected tcp, got %v", p))
-	}
+	expectedProto := "tcp"
+	expectedHost := "transit.magic-wormhole.io"
+	expectedPort := "8001"
+	DefaultTransitRelayURL = strings.Join([]string{expectedProto, expectedHost, expectedPort}, ":")
+
+	url := c.relayURL()
+	require.Equal(t, expectedProto, url.Proto)
+	require.Equal(t, expectedHost, url.Host)
+	require.Equal(t, expectedPort, strconv.Itoa(url.Port))
 }
 
 // if TransitRelayAddress is set, then it is used instead of TransitRelayURL
@@ -760,16 +742,19 @@ func TestClient_relayURL_relayAddress(t *testing.T) {
 
 	// transitRelayAddress is in host:port format
 	// protocol is assumed as "tcp".
-	c.TransitRelayAddress = "transit.magic-wormhole.io:4001"
+	expectedHost := "transit.magic-wormhole.io"
+	expectedPort := "4001"
+	c.TransitRelayAddress = strings.Join([]string{expectedHost, expectedPort}, ":")
 
 	// if proto field is empty in the input string, then
 	// relayURL() would deduce it as "tcp".
 	url := c.relayURL()
 
 	expectedProto := "tcp"
-	if url.Proto != expectedProto {
-		t.Error(fmt.Sprintf("invalid protocol, expected %v, got %v", expectedProto, url.Proto))
-	}
+
+	require.Equal(t, expectedProto, url.Proto)
+	require.Equal(t, expectedHost, url.Host)
+	require.Equal(t, expectedPort, strconv.Itoa(url.Port))
 }
 
 func TestWormholeFileTransportSendRecvViaWSRelayServer(t *testing.T) {

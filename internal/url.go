@@ -69,7 +69,7 @@ func NewSimpleURL(url string) (SimpleURL, error) {
 	}
 
 	switch urlParts[0] {
-	case "http", "https", "ws", "wss":
+	case "ws", "wss":
 		// http-based URL protocols include "//" so we need to remove it.
 		// (see RFC2616 3.2.2 http URL)
 		if host[:2] != "//" {
@@ -109,7 +109,7 @@ func (url SimpleURL) String() string {
 	// a new version of the Hints message called HintsV2?
 	slashes := ""
 	switch url.Proto {
-	case "http", "https", "ws", "wss":
+	case "ws", "wss":
 		// TODO: The hardcoding of the URL should be removed once there is
 		// a way to represent it in the Hint messages. At the moment, there
 		// is no way to do that and hence this hardcoding.

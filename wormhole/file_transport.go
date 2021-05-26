@@ -267,7 +267,7 @@ func (t *fileTransport) connectToRelay(ctx context.Context, successChan chan net
 			failChan <- addr
 			return
 		}
-	case "ws", "wss", "http", "https":
+	case "ws", "wss":
 		var wsconn *websocket.Conn
 		wsconn, _, err = websocket.Dial(ctx, t.relayURL.String(), nil)
 
@@ -399,9 +399,9 @@ func (t *fileTransport) makeTransitMsg() (*transitMsg, error) {
 		switch t.relayURL.Proto {
 		case "tcp":
 			relayType = "direct-tcp-v1"
-		case "ws", "http":
+		case "ws":
 			relayType = "direct-ws-v1"
-		case "wss", "https":
+		case "wss":
 			relayType = "direct-wss-v1"
 		default:
 			return nil, fmt.Errorf("unknown relay protocol")
@@ -481,7 +481,7 @@ func (t *fileTransport) listen() error {
 		}
 
 		t.listener = l
-	case "ws", "wss", "http", "https":
+	case "ws", "wss":
 		t.listener = nil
 	default:
 		return fmt.Errorf("%w: %s", UnsupportedProtocolErr, t.relayURL.Proto)
@@ -506,7 +506,7 @@ func (t *fileTransport) listenRelay() error {
 		if err != nil {
 			return err
 		}
-	case "ws", "wss", "http", "https":
+	case "ws", "wss":
 		c, _, err := websocket.Dial(ctx, t.relayURL.String(), nil)
 		if err != nil {
 			fmt.Errorf("websocket.Dial failed")

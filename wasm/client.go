@@ -116,7 +116,7 @@ type FileWrapper struct {
 }
 
 func NewFileWrapper(file js.Value) *FileWrapper {
-        size := file.Get("size").Int()
+	size := file.Get("size").Int()
 	data := make([]byte, size)
 
 	jsFileAsBytes := file.Call("arrayBuffer")

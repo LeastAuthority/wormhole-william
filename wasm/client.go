@@ -3,10 +3,10 @@
 package wasm
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"syscall/js"
 	"unsafe"
@@ -108,6 +108,59 @@ func Client_SendText(_ js.Value, args []js.Value) interface{} {
 		resolve(code)
 	})
 }
+type FileWrapper struct {
+	file js.Value
+	Size int64
+	data []byte
+	index int64
+}
+
+func NewFileWrapper(file js.Value) *FileWrapper {
+        size := file.Get("size").Int()
+	data := make([]byte, size)
+
+	jsFileAsBytes := file.Call("arrayBuffer")
+	uint8buffer := js.Global().Get("Uint8Array").New(jsFileAsBytes)
+	js.CopyBytesToGo(data, uint8buffer)
+
+	return &FileWrapper{file: file, Size: int64(size), data: data, index: 0}
+}
+
+func (f *FileWrapper) Read(p []byte) (n int, err error) {
+	if f.index >= int64(len(f.data)) {
+		err = io.EOF
+		return
+	}
+
+	n = copy(p, f.data[f.index:])
+	f.index += int64(n)
+
+	return
+}
+
+func (f *FileWrapper) Seek(offset int64, whence int) (int64, error) {
+	var abs int64
+
+	switch whence {
+	case io.SeekStart:
+		abs = offset
+	case io.SeekCurrent:
+		abs = f.index + offset
+	case io.SeekEnd:
+		abs = int64(len(f.data)) + offset
+	default:
+		return 0, errors.New("Seek: invalid whence")
+	}
+
+	if abs < 0 {
+		return 0, errors.New("Seek: negative position")
+	}
+
+	f.index = abs
+	return abs, nil
+}
+
+// TODO impement a reader interface
 
 func Client_SendFile(_ js.Value, args []js.Value) interface{} {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -121,11 +174,12 @@ func Client_SendFile(_ js.Value, args []js.Value) interface{} {
 		clientPtr := uintptr(args[0].Int())
 		fileName := args[1].String()
 
-		uint8Array := args[2]
-		size := uint8Array.Get("byteLength").Int()
-		fileData := make([]byte, size)
-		js.CopyBytesToGo(fileData, uint8Array)
-		fileReader := bytes.NewReader(fileData)
+		fileJSVal := args[2]
+
+		fileWrapper := NewFileWrapper(fileJSVal)
+		fmt.Printf("loading %s of size %d into memory...", fileName, fileWrapper.Size)
+
+		fmt.Printf("done\n")
 
 		err, client := getClient(clientPtr)
 		if err != nil {
@@ -138,7 +192,7 @@ func Client_SendFile(_ js.Value, args []js.Value) interface{} {
 			opts = collectTransferOptions(args[3])
 		}
 
-		code, resultChan, err := client.SendFile(ctx, fileName, fileReader, opts...)
+		code, resultChan, err := client.SendFile(ctx, fileName, fileWrapper, opts...)
 		if err != nil {
 			reject(err)
 			return

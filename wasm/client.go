@@ -194,8 +194,6 @@ func (f *FileWrapper) Seek(offset int64, whence int) (int64, error) {
 	return abs, nil
 }
 
-// TODO impement a reader interface
-
 func Client_SendFile(_ js.Value, args []js.Value) interface{} {
 	ctx, cancel := context.WithCancel(context.Background())
 

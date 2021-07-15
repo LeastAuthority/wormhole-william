@@ -111,31 +111,65 @@ func Client_SendText(_ js.Value, args []js.Value) interface{} {
 type FileWrapper struct {
 	file js.Value
 	Size int64
-	data []byte
+	pending []byte
 	index int64
 }
 
 func NewFileWrapper(file js.Value) *FileWrapper {
 	size := file.Get("size").Int()
-	data := make([]byte, size)
-
-	jsFileAsBytes := file.Call("arrayBuffer")
-	uint8buffer := js.Global().Get("Uint8Array").New(jsFileAsBytes)
-	js.CopyBytesToGo(data, uint8buffer)
-
-	return &FileWrapper{file: file, Size: int64(size), data: data, index: 0}
+	return &FileWrapper{file: file, Size: int64(size), index: 0}
 }
 
+var uint8Array = js.Global().Get("Uint8Array")
+
 func (f *FileWrapper) Read(p []byte) (n int, err error) {
-	if f.index >= int64(len(f.data)) {
-		err = io.EOF
-		return
+	if f.index >= f.Size {
+		return 0, io.EOF
 	}
 
-	n = copy(p, f.data[f.index:])
+	// use Blob.slice(start, end) to read a part of the file.
+	start := f.index
+	end := start + int64(len(p))
+
+	var (
+		bCh   = make(chan []byte, 1)
+		errCh = make(chan error, 1)
+	)
+
+	fileSlice := f.file.Call("slice", start, end)
+	arrayPromise := fileSlice.Call("arrayBuffer")
+
+	success := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		// uint8array from ArrayBuffer
+		arrayBuf := args[0]
+		uint8Buf := uint8Array.New(arrayBuf)
+
+		buf := make([]byte, uint8Buf.Get("byteLength").Int())
+		n = js.CopyBytesToGo(buf, uint8Buf)
+		bCh <- buf
+		return nil
+	})
+	defer success.Release()
+
+	failure := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		errCh <- errors.New(args[0].Get("message").String())
+		return nil
+	})
+	defer failure.Release()
+
+	arrayPromise.Call("then", success, failure)
+
+	select {
+	case b := <-bCh:
+		f.pending = b
+	case err := <-errCh:
+		return 0, err
+	}
+
+	n = copy(p, f.pending)
 	f.index += int64(n)
 
-	return
+	return n, nil
 }
 
 func (f *FileWrapper) Seek(offset int64, whence int) (int64, error) {
@@ -147,7 +181,7 @@ func (f *FileWrapper) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekCurrent:
 		abs = f.index + offset
 	case io.SeekEnd:
-		abs = int64(len(f.data)) + offset
+		abs = f.Size + offset
 	default:
 		return 0, errors.New("Seek: invalid whence")
 	}
@@ -177,9 +211,6 @@ func Client_SendFile(_ js.Value, args []js.Value) interface{} {
 		fileJSVal := args[2]
 
 		fileWrapper := NewFileWrapper(fileJSVal)
-		fmt.Printf("loading %s of size %d into memory...", fileName, fileWrapper.Size)
-
-		fmt.Printf("done\n")
 
 		err, client := getClient(clientPtr)
 		if err != nil {

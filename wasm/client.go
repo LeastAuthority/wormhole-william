@@ -337,7 +337,7 @@ func Client_RecvFile(_ js.Value, args []js.Value) interface{} {
 
 func NewFileStreamReader(ctx context.Context, msg *wormhole.IncomingMessage) js.Value {
 	// TODO: parameterize
-	bufSize := 1024 * 4 // 4KiB
+	bufSize := 1 << 14 // 1024 * 4 // 4KiB
 
 	total := 0
 	readFunc := func(_ js.Value, args []js.Value) interface{} {
@@ -362,6 +362,7 @@ func NewFileStreamReader(ctx context.Context, msg *wormhole.IncomingMessage) js.
 			}
 			n, err := msg.Read(buf)
 			total += n
+			fmt.Printf("received total of %f Mega bytes from the sending side\n", float32(total)/(1024*1024.0))
 			if err != nil {
 				reject(err)
 				return

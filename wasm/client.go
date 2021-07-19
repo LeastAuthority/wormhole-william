@@ -111,7 +111,6 @@ func Client_SendText(_ js.Value, args []js.Value) interface{} {
 type FileWrapper struct {
 	file js.Value
 	Size int64
-	pending []byte
 	index int64
 }
 
@@ -132,7 +131,7 @@ func (fileWrapper *FileWrapper) Read(p []byte) (n int, err error) {
 	end := start + int64(len(p))
 
 	var (
-		bCh   = make(chan []byte, 1)
+		bCh   = make(chan struct{}, 1)
 		errCh = make(chan error, 1)
 	)
 
@@ -144,9 +143,8 @@ func (fileWrapper *FileWrapper) Read(p []byte) (n int, err error) {
 		arrayBuf := args[0]
 		uint8Buf := uint8Array.New(arrayBuf)
 
-		buf := make([]byte, uint8Buf.Get("byteLength").Int())
-		n = js.CopyBytesToGo(buf, uint8Buf)
-		bCh <- buf
+		n = js.CopyBytesToGo(p, uint8Buf)
+		bCh <- struct{}{}
 		return nil
 	})
 	defer success.Release()
@@ -160,16 +158,15 @@ func (fileWrapper *FileWrapper) Read(p []byte) (n int, err error) {
 	arrayPromise.Call("then", success, failure)
 
 	select {
-	case b := <-bCh:
-		fileWrapper.pending = b
+	case <-bCh:
+		// do nothing
 	case err := <-errCh:
 		return 0, err
 	}
 
-	n = copy(p, fileWrapper.pending)
 	fileWrapper.index += int64(n)
 
-	return n, nil
+	return len(p), nil
 }
 
 func (fileWrapper *FileWrapper) Seek(offset int64, whence int) (int64, error) {

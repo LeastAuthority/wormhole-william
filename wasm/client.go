@@ -119,12 +119,12 @@ func NewFileWrapper(file js.Value) *FileWrapper {
 	return &FileWrapper{file: file, Size: int64(size), index: 0}
 }
 
-var uint8Array = js.Global().Get("Uint8Array")
-
 func (fileWrapper *FileWrapper) Read(p []byte) (n int, err error) {
 	if fileWrapper.index >= fileWrapper.Size {
 		return 0, io.EOF
 	}
+
+	var uint8Array = js.Global().Get("Uint8Array")
 
 	// use Blob.slice(start, end) to read a part of the file.
 	start := fileWrapper.index

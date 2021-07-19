@@ -3,10 +3,10 @@
 package wasm
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"syscall/js"
 	"unsafe"
@@ -108,6 +108,88 @@ func Client_SendText(_ js.Value, args []js.Value) interface{} {
 		resolve(code)
 	})
 }
+type FileWrapper struct {
+	file js.Value
+	Size int64
+	index int64
+}
+
+func NewFileWrapper(file js.Value) *FileWrapper {
+	size := file.Get("size").Int()
+	return &FileWrapper{file: file, Size: int64(size), index: 0}
+}
+
+func (fileWrapper *FileWrapper) Read(p []byte) (n int, err error) {
+	if fileWrapper.index >= fileWrapper.Size {
+		return 0, io.EOF
+	}
+
+	var uint8Array = js.Global().Get("Uint8Array")
+
+	// use Blob.slice(start, end) to read a part of the file.
+	start := fileWrapper.index
+	end := start + int64(len(p))
+
+	var (
+		bCh   = make(chan struct{}, 1)
+		errCh = make(chan error, 1)
+	)
+
+	fileSlice := fileWrapper.file.Call("slice", start, end)
+	arrayPromise := fileSlice.Call("arrayBuffer")
+
+	success := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		// uint8array from ArrayBuffer
+		arrayBuf := args[0]
+		uint8Buf := uint8Array.New(arrayBuf)
+
+		n = js.CopyBytesToGo(p, uint8Buf)
+		bCh <- struct{}{}
+		return nil
+	})
+	defer success.Release()
+
+	failure := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		errCh <- errors.New(args[0].Get("message").String())
+		return nil
+	})
+	defer failure.Release()
+
+	arrayPromise.Call("then", success, failure)
+
+	select {
+	case <-bCh:
+		// do nothing
+	case err := <-errCh:
+		return 0, err
+	}
+
+	fileWrapper.index += int64(n)
+
+	return len(p), nil
+}
+
+func (fileWrapper *FileWrapper) Seek(offset int64, whence int) (int64, error) {
+	var abs int64
+
+	switch whence {
+	case io.SeekStart:
+		abs = offset
+	case io.SeekCurrent:
+		abs = fileWrapper.index + offset
+	case io.SeekEnd:
+		abs = fileWrapper.Size + offset
+	default:
+		return 0, errors.New("Seek: invalid whence")
+	}
+
+	if abs < 0 {
+		return 0, errors.New("Seek: negative position")
+	}
+
+	fileWrapper.index = abs
+	return abs, nil
+}
 
 func Client_SendFile(_ js.Value, args []js.Value) interface{} {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -121,11 +203,9 @@ func Client_SendFile(_ js.Value, args []js.Value) interface{} {
 		clientPtr := uintptr(args[0].Int())
 		fileName := args[1].String()
 
-		uint8Array := args[2]
-		size := uint8Array.Get("byteLength").Int()
-		fileData := make([]byte, size)
-		js.CopyBytesToGo(fileData, uint8Array)
-		fileReader := bytes.NewReader(fileData)
+		fileJSVal := args[2]
+
+		fileWrapper := NewFileWrapper(fileJSVal)
 
 		err, client := getClient(clientPtr)
 		if err != nil {
@@ -138,7 +218,7 @@ func Client_SendFile(_ js.Value, args []js.Value) interface{} {
 			opts = collectTransferOptions(args[3])
 		}
 
-		code, resultChan, err := client.SendFile(ctx, fileName, fileReader, opts...)
+		code, resultChan, err := client.SendFile(ctx, fileName, fileWrapper, opts...)
 		if err != nil {
 			reject(err)
 			return
@@ -254,7 +334,7 @@ func Client_RecvFile(_ js.Value, args []js.Value) interface{} {
 
 func NewFileStreamReader(ctx context.Context, msg *wormhole.IncomingMessage) js.Value {
 	// TODO: parameterize
-	bufSize := 1024 * 4 // 4KiB
+	bufSize := 1 << 14 // 1024 * 4 // 4KiB
 
 	total := 0
 	readFunc := func(_ js.Value, args []js.Value) interface{} {
@@ -279,6 +359,7 @@ func NewFileStreamReader(ctx context.Context, msg *wormhole.IncomingMessage) js.
 			}
 			n, err := msg.Read(buf)
 			total += n
+			fmt.Printf("received total of %f Mega bytes from the sending side\n", float32(total)/(1024*1024.0))
 			if err != nil {
 				reject(err)
 				return

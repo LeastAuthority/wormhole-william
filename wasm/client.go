@@ -122,13 +122,13 @@ func NewFileWrapper(file js.Value) *FileWrapper {
 
 var uint8Array = js.Global().Get("Uint8Array")
 
-func (f *FileWrapper) Read(p []byte) (n int, err error) {
-	if f.index >= f.Size {
+func (fileWrapper *FileWrapper) Read(p []byte) (n int, err error) {
+	if fileWrapper.index >= fileWrapper.Size {
 		return 0, io.EOF
 	}
 
 	// use Blob.slice(start, end) to read a part of the file.
-	start := f.index
+	start := fileWrapper.index
 	end := start + int64(len(p))
 
 	var (
@@ -136,7 +136,7 @@ func (f *FileWrapper) Read(p []byte) (n int, err error) {
 		errCh = make(chan error, 1)
 	)
 
-	fileSlice := f.file.Call("slice", start, end)
+	fileSlice := fileWrapper.file.Call("slice", start, end)
 	arrayPromise := fileSlice.Call("arrayBuffer")
 
 	success := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
@@ -161,27 +161,27 @@ func (f *FileWrapper) Read(p []byte) (n int, err error) {
 
 	select {
 	case b := <-bCh:
-		f.pending = b
+		fileWrapper.pending = b
 	case err := <-errCh:
 		return 0, err
 	}
 
-	n = copy(p, f.pending)
-	f.index += int64(n)
+	n = copy(p, fileWrapper.pending)
+	fileWrapper.index += int64(n)
 
 	return n, nil
 }
 
-func (f *FileWrapper) Seek(offset int64, whence int) (int64, error) {
+func (fileWrapper *FileWrapper) Seek(offset int64, whence int) (int64, error) {
 	var abs int64
 
 	switch whence {
 	case io.SeekStart:
 		abs = offset
 	case io.SeekCurrent:
-		abs = f.index + offset
+		abs = fileWrapper.index + offset
 	case io.SeekEnd:
-		abs = f.Size + offset
+		abs = fileWrapper.Size + offset
 	default:
 		return 0, errors.New("Seek: invalid whence")
 	}
@@ -190,7 +190,7 @@ func (f *FileWrapper) Seek(offset int64, whence int) (int64, error) {
 		return 0, errors.New("Seek: negative position")
 	}
 
-	f.index = abs
+	fileWrapper.index = abs
 	return abs, nil
 }
 
